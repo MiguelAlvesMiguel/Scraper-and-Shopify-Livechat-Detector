@@ -220,7 +220,6 @@ def scrape_data(query, num_pages):
     try:
         plt.savefig('static/live_chat_usage_pie_chart.png')
         print("Pie chart saved successfully.")
-        
     except Exception as e:
         print(f"Error saving pie chart: {e}")
     
