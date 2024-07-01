@@ -225,3 +225,7 @@ def scrape_data(query, num_pages):
     
     print("Data collection complete. Reports saved to 'lead_report.xlsx' and 'shopify_without_livechat.xlsx'.")
     return df
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
