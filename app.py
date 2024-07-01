@@ -22,7 +22,7 @@ except ImportError:
     os.system('pip install xlsxwriter')
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # List of known directory sites to exclude
@@ -227,5 +227,5 @@ def scrape_data(query, num_pages):
     return df
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=True)
