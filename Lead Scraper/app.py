@@ -2,7 +2,7 @@ import os
 import requests
 import wget
 import zipfile
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.options import Options
 import time
 import subprocess
 import matplotlib.pyplot as plt
+from io import BytesIO
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -29,6 +30,7 @@ live_chat_services = [
 ]
 
 results_data = []
+shopify_without_livechat_data = []
 
 def get_chrome_version():
     """Get the current version of the Chrome browser installed on the system."""
@@ -119,7 +121,9 @@ def find_contact_info(url):
         # Find contact form
         contact_form_element = soup.find('a', href=True, text=re.compile(r'Contact|Contact Us|Support', re.I))
         if contact_form_element:
-            contact_form = url + contact_form_element['href']
+            contact_form = contact_form_element['href']
+            if not contact_form.startswith('http'):
+                contact_form = url + contact_form
             print(f"Found contact form: {contact_form}")
         
         return email, contact_form
@@ -144,7 +148,9 @@ def check_live_chat(url):
 
 def scrape_data(query, num_pages):
     global results_data
+    global shopify_without_livechat_data
     results_data = []
+    shopify_without_livechat_data = []
     chrome_version = get_chrome_version()
     download_chromedriver(chrome_version)
     search_results = google_search(query, num_pages)
@@ -174,6 +180,10 @@ def scrape_data(query, num_pages):
         
         # Append result to results_data for real-time updates
         results_data.append(data[url])
+        
+        # Append to shopify_without_livechat_data if it matches the criteria
+        if shopify and not live_chat:
+            shopify_without_livechat_data.append(data[url])
     
     df = pd.DataFrame(data.values())
     df.to_excel('lead_report.xlsx', index=False)
@@ -222,12 +232,32 @@ def index():
 def results():
     query = request.args.get('query')
     num_pages = int(request.args.get('num_pages'))
+    return render_template('results.html', query=query, num_pages=num_pages)
+
+@app.route('/scrape')
+def scrape():
+    query = request.args.get('query')
+    num_pages = int(request.args.get('num_pages'))
     scrape_data(query, num_pages)
-    return render_template('results.html', query=query)
+    return jsonify(success=True)
 
 @app.route('/updates')
 def updates():
-    return jsonify(results_data)
+    return jsonify({'results_data': results_data, 'shopify_without_livechat_data': shopify_without_livechat_data})
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    path = os.path.join(app.root_path, filename)
+    return send_file(path, as_attachment=True)
+
+@app.route('/export')
+def export():
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        pd.DataFrame(results_data).to_excel(writer, sheet_name='All Results', index=False)
+        pd.DataFrame(shopify_without_livechat_data).to_excel(writer, sheet_name='Shopify without Live Chat', index=False)
+    output.seek(0)
+    return send_file(output, attachment_filename="exported_data.xlsx", as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True)

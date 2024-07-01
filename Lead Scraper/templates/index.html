@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Scraper</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        .loading {
+            display: none;
+            text-align: center;
+            font-size: 1.5em;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Web Scraper</h1>
+        <form id="scrape-form" method="POST" action="{{ url_for('index') }}">
+            <div class="form-group">
+                <label for="query">Search Query:</label>
+                <input type="text" class="form-control" id="query" name="query" required>
+            </div>
+            <div class="form-group">
+                <label for="num_pages">Number of Pages to Scrape:</label>
+                <input type="number" class="form-control" id="num_pages" name="num_pages" value="1" min="1" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Submit</button>
+        </form>
+        <div class="loading" id="loading">
+            <img src="https://i.gifer.com/ZZ5H.gif" alt="Loading..." width="50" height="50">
+            <p>Scraping in progress, please wait...</p>
+        </div>
+    </div>
+    <script>
+        document.getElementById('scrape-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const query = document.getElementById('query').value;
+            const num_pages = document.getElementById('num_pages').value;
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            fetch(`/scrape?query=${query}&num_pages=${num_pages}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loading.style.display = 'none';
+                        window.location.href = `/results?query=${query}&num_pages=${num_pages}`;
+                    }
+                });
+        });
+    </script>
+</body>
+</html>
