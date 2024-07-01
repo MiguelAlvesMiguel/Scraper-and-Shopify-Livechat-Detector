@@ -14,7 +14,10 @@ import time
 import subprocess
 import matplotlib.pyplot as plt
 from io import BytesIO
+from dotenv import load_dotenv
 
+# Load environment variables from a .env file
+load_dotenv()
 # Ensure xlsxwriter is installed
 try:
     import xlsxwriter
