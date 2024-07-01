@@ -213,7 +213,7 @@ def scrape_data(query, num_pages):
     explode = (0.1, 0)  # explode the first slice
 
     plt.pie(sizes, explode=explode, labels=labels, colors=colors,
-            autopct='%1.1%%', shadow=True, startangle=140)
+            autopct='%1.1f%%', shadow=True, startangle=140)
     plt.title(f"Live Chat Solution Usage for: {query}")
     plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
 
@@ -225,45 +225,3 @@ def scrape_data(query, num_pages):
     
     print("Data collection complete. Reports saved to 'lead_report.xlsx' and 'shopify_without_livechat.xlsx'.")
     return df
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        query = request.form['query']
-        num_pages = int(request.form['num_pages'])
-        return redirect(url_for('results', query=query, num_pages=num_pages))
-    return render_template('index.html')
-
-@app.route('/results')
-def results():
-    query = request.args.get('query')
-    num_pages = int(request.args.get('num_pages'))
-    return render_template('results.html', query=query, num_pages=num_pages)
-
-@app.route('/scrape')
-def scrape():
-    query = request.args.get('query')
-    num_pages = int(request.args.get('num_pages'))
-    scrape_data(query, num_pages)
-    return jsonify(success=True)
-
-@app.route('/updates')
-def updates():
-    return jsonify({'results_data': results_data, 'shopify_without_livechat_data': shopify_without_livechat_data})
-
-@app.route('/download/<filename>')
-def download_file(filename):
-    path = os.path.join(app.root_path, filename)
-    return send_file(path, as_attachment=True)
-
-@app.route('/export')
-def export():
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        pd.DataFrame(results_data).to_excel(writer, sheet_name='All Results', index=False)
-        pd.DataFrame(shopify_without_livechat_data).to_excel(writer, sheet_name='Shopify without Live Chat', index=False)
-    output.seek(0)
-    return send_file(output, attachment_filename="exported_data.xlsx", as_attachment=True)
-
-if __name__ == '__main__':
-    app.run(debug=True)
