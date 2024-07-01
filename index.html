@@ -3,52 +3,223 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Scraper</title>
+    <title>Lead Scraper</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+        }
         .loading {
-            display: none;
             text-align: center;
             font-size: 1.5em;
             margin-top: 20px;
+        }
+        .hidden {
+            display: none;
+        }
+        .results-table {
+            margin-top: 20px;
+            width: 100%;
+        }
+        .results-table th {
+            cursor: pointer;
+        }
+        .highlight-shopify {
+            background-color: rgba(255, 204, 204, 0.5); /* Slight red background with opacity for non-Shopify */
+        }
+        .highlight-shopify-no-chat {
+            background-color: rgba(204, 255, 204, 0.5); /* Slight green background with opacity for Shopify without live chat */
+        }
+        .pie-chart {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        table {
+            background-color: #1e1e1e;
+        }
+        th, td {
+            color: #ffffff;
+        }
+        th.sortable:after {
+            content: '\25b2'; /* Unicode character for upwards triangle (default sort icon) */
+            font-size: 0.8em;
+            margin-left: 0.5em;
+            color: #ffffff;
+        }
+        th.sortable.asc:after {
+            content: '\25b2'; /* Unicode character for upwards triangle */
+        }
+        th.sortable.desc:after {
+            content: '\25bc'; /* Unicode character for downwards triangle */
         }
     </style>
 </head>
 <body>
     <div class="container mt-5">
-        <h1>Web Scraper</h1>
-        <form id="scrape-form" method="POST" action="{{ url_for('index') }}">
+        <h1>Lead Scraper</h1>
+        <form id="scrape-form">
             <div class="form-group">
                 <label for="query">Search Query:</label>
                 <input type="text" class="form-control" id="query" name="query" required>
             </div>
             <div class="form-group">
                 <label for="num_pages">Number of Pages to Scrape:</label>
-                <input type="number" class="form-control" id="num_pages" name="num_pages" value="1" min="1" required>
+                <input type="number" class="form-control" id="num_pages" name="num_pages" min="1" max="10" required>
             </div>
-            <button type="submit" class="btn btn-primary">Submit</button>
+            <button type="submit" class="btn btn-primary">Start Scraping</button>
         </form>
-        <div class="loading" id="loading">
+        <div class="loading hidden" id="loading">
             <img src="https://i.gifer.com/ZZ5H.gif" alt="Loading..." width="50" height="50">
-            <p>Scraping in progress, please wait...</p>
+            <p id="loading-message">Scraping in progress, please wait...</p>
+        </div>
+        <div class="results hidden" id="results">
+            <div class="pie-chart" id="pie-chart-container">
+                <canvas id="liveChatChart" width="400" height="400"></canvas>
+            </div>
+            <table class="table table-striped results-table" id="results-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="URL">URL</th>
+                        <th class="sortable" data-sort="Shopify">Shopify</th>
+                        <th class="sortable" data-sort="Email">Email</th>
+                        <th class="sortable" data-sort="Contact_Form">Contact Form</th>
+                        <th class="sortable" data-sort="Live_Chat_Solution">Live Chat Solution</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
         </div>
     </div>
     <script>
-        document.getElementById('scrape-form').addEventListener('submit', function(event) {
-            event.preventDefault();
-            const query = document.getElementById('query').value;
-            const num_pages = document.getElementById('num_pages').value;
-            const loading = document.getElementById('loading');
-            loading.style.display = 'block';
+        $(document).ready(function() {
+            var socket = io.connect('http://' + document.domain + ':' + location.port);
 
-            fetch(`/scrape?query=${query}&num_pages=${num_pages}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        loading.style.display = 'none';
-                        window.location.href = `/results?query=${query}&num_pages=${num_pages}`;
+            var liveChatData = {
+                labels: ['With Live Chat', 'Without Live Chat'],
+                datasets: [{
+                    data: [0, 0],
+                    backgroundColor: ['#ff9999', '#66b3ff']
+                }]
+            };
+            var liveChatChart = new Chart(document.getElementById('liveChatChart').getContext('2d'), {
+                type: 'pie',
+                data: liveChatData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                color: '#ffffff' // Adjust legend text color
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Live Chat Solution Usage',
+                            color: '#ffffff' // Adjust title color
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    var label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed !== null) {
+                                        label += context.parsed.toFixed(1) + '%';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
                     }
+                }
+            });
+
+            function addRowToTable(data) {
+                var rowClass = '';
+                if (!data.Shopify) {
+                    rowClass = 'highlight-shopify';
+                } else if (data.Shopify && !data.Live_Chat_Solution) {
+                    rowClass = 'highlight-shopify-no-chat';
+                }
+                $("#results-table tbody").append(`
+                    <tr class="${rowClass}">
+                        <td>${data.URL}</td>
+                        <td>${data.Shopify ? '✅' : '❌'}</td>
+                        <td>${data.Email || 'N/A'}</td>
+                        <td>${data.Contact_Form || 'N/A'}</td>
+                        <td>${data.Live_Chat_Solution || 'N/A'}</td>
+                    </tr>
+                `);
+            }
+
+            socket.on('update', function(data) {
+                console.log('Received update:', data);
+                if (data.message) {
+                    $("#loading-message").text(data.message);
+                }
+                if (data.results_data) {
+                    console.log('Received results_data:', data.results_data);
+                    addRowToTable(data.results_data);
+
+                    if (data.results_data.Live_Chat_Solution) {
+                        liveChatChart.data.datasets[0].data[0]++;
+                    } else {
+                        liveChatChart.data.datasets[0].data[1]++;
+                    }
+                    liveChatChart.update();
+
+                    $("#results").removeClass('hidden');
+                }
+            });
+
+            socket.on('scraping_complete', function() {
+                console.log('Scraping complete');
+                $("#loading").hide();
+                $("#results").removeClass('hidden');
+            });
+
+            $("#scrape-form").submit(function(event) {
+                event.preventDefault();
+                var query = $("#query").val();
+                var num_pages = $("#num_pages").val();
+                console.log('Form submitted:', query, num_pages);
+                $("#loading").removeClass('hidden');
+                $("#results-table tbody").empty();
+                liveChatChart.data.datasets[0].data = [0, 0]; // Reset pie chart data
+                liveChatChart.update(); // Update the pie chart
+                $.post("/scrape", { query: query, num_pages: num_pages }, function() {
+                    console.log('Scraping started');
+                    $("#loading").show();
                 });
+            });
+
+            $('#results-table').on('click', 'th', function() {
+                var table = $(this).parents('table').eq(0);
+                var rows = table.find('tr:gt(0)').toArray().sort(comparer($(this).index()));
+                this.asc = !this.asc;
+                if (!this.asc) { rows = rows.reverse(); }
+                table.children('tbody').empty().html(rows);
+                table.find('th').removeClass('asc desc');
+                $(this).addClass(this.asc ? 'asc' : 'desc');
+            });
+
+            function comparer(index) {
+                return function(a, b) {
+                    var valA = getCellValue(a, index), valB = getCellValue(b, index);
+                    return $.isNumeric(valA) && $.isNumeric(valB) ? valA - valB : valA.localeCompare(valB);
+                };
+            }
+
+            function getCellValue(row, index) { return $(row).children('td').eq(index).text(); }
         });
     </script>
 </body>
