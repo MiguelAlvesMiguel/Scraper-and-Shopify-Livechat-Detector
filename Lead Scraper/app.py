@@ -15,6 +15,12 @@ import subprocess
 import matplotlib.pyplot as plt
 from io import BytesIO
 
+# Ensure xlsxwriter is installed
+try:
+    import xlsxwriter
+except ImportError:
+    os.system('pip install xlsxwriter')
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -207,7 +213,7 @@ def scrape_data(query, num_pages):
     explode = (0.1, 0)  # explode the first slice
 
     plt.pie(sizes, explode=explode, labels=labels, colors=colors,
-            autopct='%1.1f%%', shadow=True, startangle=140)
+            autopct='%1.1%%', shadow=True, startangle=140)
     plt.title(f"Live Chat Solution Usage for: {query}")
     plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
 
