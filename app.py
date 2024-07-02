@@ -109,7 +109,7 @@ def google_search(query, num_pages):
 def check_shopify(url):
     print(f"Checking if {url} uses Shopify...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         if 'Shopify' in response.text or soup.find(attrs={'data-shopify'}) or soup.find('link', {'href': re.compile(r'\.myshopify\.com')}):
@@ -124,7 +124,7 @@ def check_shopify(url):
 def find_contact_info(url):
     print(f"Searching for contact info on {url}...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         email = None
@@ -152,7 +152,7 @@ def find_contact_info(url):
 def check_live_chat(url):
     print(f"Checking for live chat solutions on {url}...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         if 'CHAT WITH US' in response.text:
             return 'UNKNOWN'

@@ -24,15 +24,16 @@
         .results-table {
             margin-top: 20px;
             width: 100%;
+            max-width: max-content;
         }
         .results-table th {
             cursor: pointer;
         }
         .highlight-shopify {
-            background-color: rgba(255, 204, 204, 0.5); /* Slight red background with opacity for non-Shopify */
+            background-color: rgba(255, 204, 204, 0.2); /* Slight red background with opacity for non-Shopify */
         }
         .highlight-shopify-no-chat {
-            background-color: rgba(204, 255, 204, 0.5); /* Slight green background with opacity for Shopify without live chat */
+            background-color: rgba(204, 255, 204, 0.2); /* Slight green background with opacity for Shopify without live chat */
         }
         .pie-chart {
             margin-top: 20px;
@@ -41,9 +42,12 @@
         }
         table {
             background-color: #1e1e1e;
+            max-width: 100%;
         }
         th, td {
             color: #ffffff;
+            padding: 8px;
+            text-align: left;
         }
         th.sortable:after {
             content: '\25b2'; /* Unicode character for upwards triangle (default sort icon) */
@@ -79,7 +83,7 @@
         </div>
         <div class="results hidden" id="results">
             <div class="pie-chart" id="pie-chart-container">
-                <canvas id="liveChatChart" width="400" height="400"></canvas>
+                <canvas id="liveChatChart" width="1900" height="400" style="display: block; box-sizing: border-box; height: 555px; width: 3170px;"></canvas>
             </div>
             <table class="table table-striped results-table" id="results-table">
                 <thead>
@@ -94,6 +98,7 @@
                 <tbody>
                 </tbody>
             </table>
+            <button id="export-btn" class="btn btn-secondary mt-3">Export to Excel</button>
         </div>
     </div>
     <script>
@@ -132,8 +137,8 @@
                                     if (label) {
                                         label += ': ';
                                     }
-                                    if (context.parsed !== null) {
-                                        label += context.parsed.toFixed(1) + '%';
+                                    if (context.raw !== null) {
+                                        label += context.raw.toFixed(1) + '%';
                                     }
                                     return label;
                                 }
@@ -220,6 +225,10 @@
             }
 
             function getCellValue(row, index) { return $(row).children('td').eq(index).text(); }
+
+            $("#export-btn").click(function() {
+                window.location.href = "/export";
+            });
         });
     </script>
 </body>
