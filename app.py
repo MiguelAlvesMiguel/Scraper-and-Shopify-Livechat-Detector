@@ -2,7 +2,8 @@ import os
 import requests
 import wget
 import zipfile
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file
+from flask_socketio import SocketIO, emit
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
@@ -14,19 +15,18 @@ import time
 import subprocess
 import matplotlib.pyplot as plt
 from io import BytesIO
-from dotenv import load_dotenv
-
-# Load environment variables from a .env file
-load_dotenv()
+from urllib.parse import urlparse
+import platform
 # Ensure xlsxwriter is installed
 try:
     import xlsxwriter
 except ImportError:
     os.system('pip install xlsxwriter')
 
-# Initialize Flask app
-app = Flask(__name__, template_folder='templates', static_folder='static')
+# Initialize Flask app and SocketIO
+app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+socketio = SocketIO(app)
 
 # List of known directory sites to exclude
 EXCLUDED_SITES = ["yelp.com", "amazon.com", "wikipedia.org", "tripadvisor.com", "facebook.com"]
@@ -40,15 +40,20 @@ live_chat_services = [
 
 results_data = []
 shopify_without_livechat_data = []
+processed_domains = set()
+
 
 def get_chrome_version():
     """Get the current version of the Chrome browser installed on the system."""
-    output = subprocess.check_output(
-        r'wmic datafile where name="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" get Version /value',
-        shell=True
-    )
-    version = output.decode().strip().split('=')[1]
-    return version
+    try:
+        output = subprocess.check_output(
+            ["google-chrome", "--version"]
+        )
+        version = output.decode().strip().split(' ')[2]
+        return version
+    except Exception as e:
+        print(f"Error getting Chrome version: {e}")
+        return None
 
 def download_chromedriver(version):
     """Download the chromedriver matching the installed Chrome browser version."""
@@ -57,7 +62,14 @@ def download_chromedriver(version):
         print("Chromedriver not found, downloading...")
         
         # Download chromedriver for the specified version
-        download_url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/win64/chromedriver-win64.zip"
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            download_url = f"https://chromedriver.storage.googleapis.com/{version}/chromedriver_mac64.zip"
+        elif system == "Linux":
+            download_url = f"https://chromedriver.storage.googleapis.com/{version}/chromedriver_linux64.zip"
+        else:
+            download_url = f"https://chromedriver.storage.googleapis.com/{version}/chromedriver_win32.zip"
+
         latest_driver_zip = wget.download(download_url, 'chromedriver.zip')
         
         with zipfile.ZipFile(latest_driver_zip, 'r') as zip_ref:
@@ -68,39 +80,56 @@ def download_chromedriver(version):
     else:
         print("Chromedriver already exists.")
 
+def get_main_domain(url):
+    """Extract the main domain from a URL."""
+    parsed_url = urlparse(url)
+    return parsed_url.netloc
+
 def google_search(query, num_pages):
     options = Options()
     options.headless = True  # Run Chrome in headless mode
     service = Service('chromedriver.exe')  # Path to the ChromeDriver executable
     driver = webdriver.Chrome(service=service, options=options)
     
+    max_retries = 3
+    retries = 0
     links = []
-    for page in range(0, num_pages):  # Loop through the specified number of pages
-        start = page * 10
-        search_url = f"https://www.google.com/search?q={query}&start={start}"
-        driver.get(search_url)
+
+    while retries < max_retries and len(links) == 0:
+        for page in range(0, num_pages):  # Loop through the specified number of pages
+            start = page * 10
+            search_url = f"https://www.google.com/search?q={query}&start={start}"
+            driver.get(search_url)
+            
+            # Wait for the results to load
+            time.sleep(2)
+            
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            search_results = soup.find_all('div', class_='yuRUbf')
+            for result in search_results:
+                a_tag = result.find('a', href=True)
+                if a_tag:
+                    link = a_tag['href']
+                    main_domain = get_main_domain(link)
+                    if not any(site in link for site in EXCLUDED_SITES) and main_domain not in processed_domains:
+                        links.append(link)
+                        processed_domains.add(main_domain)
+                        socketio.emit('update', {'message': f"Found {len(links)} websites, scraping in progress..."})
         
-        # Wait for the results to load
-        time.sleep(2)
-        
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        search_results = soup.find_all('div', class_='yuRUbf')
-        for result in search_results:
-            a_tag = result.find('a', href=True)
-            if a_tag:
-                link = a_tag['href']
-                if not any(site in link for site in EXCLUDED_SITES):
-                    links.append(link)
-    
+        if len(links) == 0:
+            retries += 1
+            print(f"No links found, retrying... ({retries}/{max_retries})")
+
     print(f"Found {len(links)} links on the Google search pages.")
     
     driver.quit()
     return links
 
+
 def check_shopify(url):
     print(f"Checking if {url} uses Shopify...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         if 'Shopify' in response.text or soup.find(attrs={'data-shopify'}) or soup.find('link', {'href': re.compile(r'\.myshopify\.com')}):
@@ -115,7 +144,7 @@ def check_shopify(url):
 def find_contact_info(url):
     print(f"Searching for contact info on {url}...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         email = None
@@ -143,8 +172,10 @@ def find_contact_info(url):
 def check_live_chat(url):
     print(f"Checking for live chat solutions on {url}...")
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=3)
         response.raise_for_status()
+        if 'CHAT WITH US' in response.text:
+            return 'UNKNOWN'
         for solution in live_chat_services:
             if solution in response.text:
                 print(f"Found live chat solution: {solution} on {url}")
@@ -177,18 +208,20 @@ def scrape_data(query, num_pages):
                 'URL': url,
                 'Shopify': shopify,
                 'Email': email,
-                'Contact Form': contact_form,
-                'Live Chat Solution': live_chat
+                'Contact_Form': contact_form,
+                'Live_Chat_Solution': live_chat
             }
         else:
             # Update existing record with new information
             data[url]['Shopify'] = shopify
             data[url]['Email'] = email
-            data[url]['Contact Form'] = contact_form
-            data[url]['Live Chat Solution'] = live_chat
+            data[url]['Contact_Form'] = contact_form
+            data[url]['Live_Chat_Solution'] = live_chat
         
         # Append result to results_data for real-time updates
         results_data.append(data[url])
+        socketio.emit('update', {'results_data': data[url]})
+        print(f"Processed {url}: {data[url]}")
         
         # Append to shopify_without_livechat_data if it matches the criteria
         if shopify and not live_chat:
@@ -198,7 +231,7 @@ def scrape_data(query, num_pages):
     df.to_excel('lead_report.xlsx', index=False)
 
     # Filter for Shopify stores without live chat solutions
-    no_live_chat_df = df[(df['Shopify'] == True) & (df['Live Chat Solution'].isna())]
+    no_live_chat_df = df[(df['Shopify'] == True) & (df['Live_Chat_Solution'].isna())]
     no_live_chat_df.to_excel('shopify_without_livechat.xlsx', index=False)
 
     # Ensure static directory exists
@@ -207,10 +240,10 @@ def scrape_data(query, num_pages):
 
     # Generate pie chart for live chat solution usage
     total_sites = len(df)
-    sites_with_live_chat = len(df[df['Live Chat Solution'].notna()])
+    sites_with_live_chat = len(df[df['Live_Chat_Solution'].notna()])
     sites_without_live_chat = total_sites - sites_with_live_chat
 
-    labels = 'With Live Chat', 'Without Live Chat'
+    labels = ['With Live Chat', 'Without Live Chat']
     sizes = [sites_with_live_chat, sites_without_live_chat]
     colors = ['#ff9999','#66b3ff']
     explode = (0.1, 0)  # explode the first slice
@@ -223,12 +256,38 @@ def scrape_data(query, num_pages):
     try:
         plt.savefig('static/live_chat_usage_pie_chart.png')
         print("Pie chart saved successfully.")
+        socketio.emit('update', {'pie_chart': 'static/live_chat_usage_pie_chart.png'})
     except Exception as e:
         print(f"Error saving pie chart: {e}")
     
     print("Data collection complete. Reports saved to 'lead_report.xlsx' and 'shopify_without_livechat.xlsx'.")
+    socketio.emit('scraping_complete')
     return df
 
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    return render_template('index.html')
+
+@app.route('/scrape', methods=['POST'])
+def scrape():
+    query = request.form['query']
+    num_pages = int(request.form['num_pages'])
+    socketio.start_background_task(target=scrape_data, query=query, num_pages=num_pages)
+    return jsonify(success=True)
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    path = os.path.join(app.root_path, filename)
+    return send_file(path, as_attachment=True)
+
+@app.route('/export')
+def export():
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        pd.DataFrame(results_data).to_excel(writer, sheet_name='All Results', index=False)
+        pd.DataFrame(shopify_without_livechat_data).to_excel(writer, sheet_name='Shopify without Live Chat', index=False)
+    output.seek(0)
+    return send_file(output, download_name="exported_data.xlsx", as_attachment=True)
+
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    socketio.run(app, debug=True)
