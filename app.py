@@ -2,7 +2,7 @@ import os
 import requests
 import wget
 import zipfile
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file,redirect
 from flask_socketio import SocketIO, emit
 from bs4 import BeautifulSoup
 import re
@@ -16,6 +16,7 @@ import subprocess
 import matplotlib.pyplot as plt
 from io import BytesIO
 from urllib.parse import urlparse
+from flask_talisman import Talisman
 
 # Ensure xlsxwriter is installed
 try:
@@ -27,6 +28,36 @@ except ImportError:
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 socketio = SocketIO(app)
+if 'https' in request.url_root:
+    app.config['PREFERRED_URL_SCHEME'] = 'https'
+# Configure Talisman with relaxed CSP to allow required resources
+csp = {
+    'default-src': [
+        '\'self\'',
+        'https://stackpath.bootstrapcdn.com',
+        'https://code.jquery.com',
+        'https://cdnjs.cloudflare.com',
+        'https://cdn.jsdelivr.net',
+        'https://cdn.socket.io',
+        '\'unsafe-inline\''
+    ],
+    'script-src': [
+        '\'self\'',
+        'https://code.jquery.com',
+        'https://cdnjs.cloudflare.com',
+        'https://cdn.jsdelivr.net',
+        'https://cdn.socket.io',
+        '\'unsafe-inline\''
+    ],
+    'img-src': [
+        '\'self\'',
+        'data:',
+        'https://i.gifer.com',
+        'https://*'
+    ]
+}
+
+Talisman(app, content_security_policy=csp, content_security_policy_nonce_in=['script-src'])
 
 # List of known directory sites to exclude
 EXCLUDED_SITES = ["yelp.com", "amazon.com", "wikipedia.org", "tripadvisor.com", "facebook.com"]
@@ -41,6 +72,12 @@ live_chat_services = [
 results_data = []
 shopify_without_livechat_data = []
 processed_domains = set()
+
+@app.before_request
+def before_request():
+    if request.url.startswith('http://') and not app.debug:
+        url = request.url.replace('http://', 'https://', 1)
+        return redirect(url, code=301)
 
 def get_chrome_version():
     """Get the current version of the Chrome browser installed on the system."""
@@ -80,31 +117,40 @@ def google_search(query, num_pages):
     service = Service('chromedriver.exe')  # Path to the ChromeDriver executable
     driver = webdriver.Chrome(service=service, options=options)
     
+    max_retries = 3
+    retries = 0
     links = []
-    for page in range(0, num_pages):  # Loop through the specified number of pages
-        start = page * 10
-        search_url = f"https://www.google.com/search?q={query}&start={start}"
-        driver.get(search_url)
+
+    while retries < max_retries and len(links) == 0:
+        for page in range(0, num_pages):  # Loop through the specified number of pages
+            start = page * 10
+            search_url = f"https://www.google.com/search?q={query}&start={start}"
+            driver.get(search_url)
+            
+            # Wait for the results to load
+            time.sleep(2)
+            
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            search_results = soup.find_all('div', class_='yuRUbf')
+            for result in search_results:
+                a_tag = result.find('a', href=True)
+                if a_tag:
+                    link = a_tag['href']
+                    main_domain = get_main_domain(link)
+                    if not any(site in link for site in EXCLUDED_SITES) and main_domain not in processed_domains:
+                        links.append(link)
+                        processed_domains.add(main_domain)
+                        socketio.emit('update', {'message': f"Found {len(links)} websites, scraping in progress..."})
         
-        # Wait for the results to load
-        time.sleep(2)
-        
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        search_results = soup.find_all('div', class_='yuRUbf')
-        for result in search_results:
-            a_tag = result.find('a', href=True)
-            if a_tag:
-                link = a_tag['href']
-                main_domain = get_main_domain(link)
-                if not any(site in link for site in EXCLUDED_SITES) and main_domain not in processed_domains:
-                    links.append(link)
-                    processed_domains.add(main_domain)
-                    socketio.emit('update', {'message': f"Found {len(links)} websites, scraping in progress..."})
-    
+        if len(links) == 0:
+            retries += 1
+            print(f"No links found, retrying... ({retries}/{max_retries})")
+
     print(f"Found {len(links)} links on the Google search pages.")
     
     driver.quit()
     return links
+
 
 def check_shopify(url):
     print(f"Checking if {url} uses Shopify...")
@@ -175,6 +221,11 @@ def scrape_data(query, num_pages):
     download_chromedriver(chrome_version)
     search_results = google_search(query, num_pages)
     data = {}
+
+    if not search_results:
+        print("No links found. Exiting the scrape data function.")
+        socketio.emit('scraping_complete')
+        return None
     
     for result in search_results:
         url = result
@@ -192,57 +243,60 @@ def scrape_data(query, num_pages):
                 'Live_Chat_Solution': live_chat
             }
         else:
-            # Update existing record with new information
             data[url]['Shopify'] = shopify
             data[url]['Email'] = email
             data[url]['Contact_Form'] = contact_form
             data[url]['Live_Chat_Solution'] = live_chat
         
-        # Append result to results_data for real-time updates
         results_data.append(data[url])
         socketio.emit('update', {'results_data': data[url]})
         print(f"Processed {url}: {data[url]}")
         
-        # Append to shopify_without_livechat_data if it matches the criteria
         if shopify and not live_chat:
             shopify_without_livechat_data.append(data[url])
+    
+    if not data:
+        print("No data to process. Exiting.")
+        socketio.emit('scraping_complete')
+        return None
     
     df = pd.DataFrame(data.values())
     df.to_excel('lead_report.xlsx', index=False)
 
-    # Filter for Shopify stores without live chat solutions
-    no_live_chat_df = df[(df['Shopify'] == True) & (df['Live_Chat_Solution'].isna())]
-    no_live_chat_df.to_excel('shopify_without_livechat.xlsx', index=False)
+    if 'Shopify' in df.columns:
+        no_live_chat_df = df[(df['Shopify'] == True) & (df['Live_Chat_Solution'].isna())]
+        no_live_chat_df.to_excel('shopify_without_livechat.xlsx', index=False)
+    else:
+        print("No 'Shopify' column found in the dataframe.")
 
-    # Ensure static directory exists
     if not os.path.exists('static'):
         os.makedirs('static')
 
-    # Generate pie chart for live chat solution usage
+    # Generate pie chart for Shopify usage
     total_sites = len(df)
-    sites_with_live_chat = len(df[df['Live_Chat_Solution'].notna()])
-    sites_without_live_chat = total_sites - sites_with_live_chat
+    sites_using_shopify = len(df[df['Shopify'] == True])
+    sites_not_using_shopify = total_sites - sites_using_shopify
 
-    labels = ['With Live Chat', 'Without Live Chat']
-    sizes = [sites_with_live_chat, sites_without_live_chat]
-    colors = ['#ff9999','#66b3ff']
+    labels = ['Using Shopify', 'Not Using Shopify']
+    sizes = [sites_using_shopify, sites_not_using_shopify]
+    colors = ['#66ff66', '#ff6666']
     explode = (0.1, 0)  # explode the first slice
 
     plt.pie(sizes, explode=explode, labels=labels, colors=colors,
             autopct='%1.1f%%', shadow=True, startangle=140)
-    plt.title(f"Live Chat Solution Usage for: {query}")
+    plt.title(f"Shopify Usage for: {query}")
     plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
 
     try:
-        plt.savefig('static/live_chat_usage_pie_chart.png')
-        print("Pie chart saved successfully.")
-        socketio.emit('update', {'pie_chart': 'static/live_chat_usage_pie_chart.png'})
+        plt.savefig('static/shopify_usage_pie_chart.png')
+        print("Shopify pie chart saved successfully.")
+        socketio.emit('update', {'shopify_pie_chart': 'static/shopify_usage_pie_chart.png'})
     except Exception as e:
-        print(f"Error saving pie chart: {e}")
-    
-    print("Data collection complete. Reports saved to 'lead_report.xlsx' and 'shopify_without_livechat.xlsx'.")
+        print(f"Error saving Shopify pie chart: {e}")
+
     socketio.emit('scraping_complete')
     return df
+
 
 @app.route('/', methods=['GET', 'POST'])
 def index():

@@ -6,7 +6,7 @@
     <title>Lead Scraper</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -24,16 +24,15 @@
         .results-table {
             margin-top: 20px;
             width: 100%;
-            max-width: max-content;
         }
         .results-table th {
             cursor: pointer;
         }
         .highlight-shopify {
-            background-color: rgba(255, 204, 204, 0.2); /* Slight red background with opacity for non-Shopify */
+            background-color: rgba(255, 204, 204, 0.5); /* Slight red background with opacity for non-Shopify */
         }
         .highlight-shopify-no-chat {
-            background-color: rgba(204, 255, 204, 0.2); /* Slight green background with opacity for Shopify without live chat */
+            background-color: rgba(204, 255, 204, 0.5); /* Slight green background with opacity for Shopify without live chat */
         }
         .pie-chart {
             margin-top: 20px;
@@ -42,12 +41,9 @@
         }
         table {
             background-color: #1e1e1e;
-            max-width: 100%;
         }
         th, td {
             color: #ffffff;
-            padding: 8px;
-            text-align: left;
         }
         th.sortable:after {
             content: '\25b2'; /* Unicode character for upwards triangle (default sort icon) */
@@ -83,7 +79,10 @@
         </div>
         <div class="results hidden" id="results">
             <div class="pie-chart" id="pie-chart-container">
-                <canvas id="liveChatChart" width="1900" height="400" style="display: block; box-sizing: border-box; height: 555px; width: 3170px;"></canvas>
+                <canvas id="liveChatChart" width="400" height="400"></canvas>
+            </div>
+            <div class="pie-chart" id="shopify-pie-chart-container">
+                <canvas id="shopifyChart" width="400" height="400"></canvas>
             </div>
             <table class="table table-striped results-table" id="results-table">
                 <thead>
@@ -98,12 +97,16 @@
                 <tbody>
                 </tbody>
             </table>
-            <button id="export-btn" class="btn btn-secondary mt-3">Export to Excel</button>
+            <button id="export-all" class="btn btn-success">Export All</button>
+            <button id="export-shopify" class="btn btn-info">Export Shopify without Live Chat</button>
         </div>
     </div>
-    <script>
+    <script nonce="{{ csp_nonce() }}">
         $(document).ready(function() {
-            var socket = io.connect('http://' + document.domain + ':' + location.port);
+
+            var socket = io.connect('https://' + document.domain + ':' + location.port); // 
+         
+
 
             var liveChatData = {
                 labels: ['With Live Chat', 'Without Live Chat'],
@@ -137,8 +140,51 @@
                                     if (label) {
                                         label += ': ';
                                     }
-                                    if (context.raw !== null) {
-                                        label += context.raw.toFixed(1) + '%';
+                                    if (context.parsed !== null) {
+                                        label += context.parsed.toFixed(1) + '%';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            var shopifyData = {
+                labels: ['Using Shopify', 'Not Using Shopify'],
+                datasets: [{
+                    data: [0, 0],
+                    backgroundColor: ['#66ff66', '#ff6666']
+                }]
+            };
+            var shopifyChart = new Chart(document.getElementById('shopifyChart').getContext('2d'), {
+                type: 'pie',
+                data: shopifyData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                color: '#ffffff' // Adjust legend text color
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Shopify Usage',
+                            color: '#ffffff' // Adjust title color
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    var label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed !== null) {
+                                        label += context.parsed.toFixed(1) + '%';
                                     }
                                     return label;
                                 }
